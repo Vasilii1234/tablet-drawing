@@ -1,0 +1,23 @@
+{
+  "name": "tablet-drawing",
+  "version": "1.0.0",
+  "description": "draw on a tablet, see on pc like it was a wacom tablet",
+  "main": "index.js",
+  "dependencies": {
+    "nodejs-websocket": "^1.4.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nickooms/tablet-drawing.git"
+  },
+  "author": "Nick Ooms <oomsni@gmail.com> (https://nickooms.github.io/)",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/nickooms/tablet-drawing/issues"
+  },
+  "homepage": "https://github.com/nickooms/tablet-drawing#readme"
+}

@@ -1,0 +1,330 @@
+<html>
+
+<head>
+  <title>Tablet Drawing</title>
+  <meta name="mobile-web-app-capable" content="yes">
+  <style>
+  body {
+    margin: 0px;
+  }
+  
+  canvas {
+    width: 100%;
+    height: 100%;
+  }
+  
+  form {
+    display: none;
+  }
+  </style>
+  <script>
+  var connection, isTablet, canvas, context, otherWidth, otherHeight, widthRatio, heightRatio;
+  var ongoingTouches = new Array();
+  window.addEventListener('load', function() {
+    var isTablet = is_touch_device();
+    var nickname = isTablet ? 'tablet' : 'pc';
+    if (nickname) {
+      connection = new WebSocket('ws://' + window.location.hostname + ':8081');
+      connection.onopen = function() {
+        console.log('Connection opened');
+        connection.send(nickname);
+        init();
+      }
+      connection.onclose = function() {
+        console.log('Connection closed');
+      }
+      connection.onerror = function() {
+        console.error('Connection error');
+      }
+      connection.onmessage = isTablet ? onMessageTablet : onMessagePC;
+    }
+  });
+
+  function send(msg) {
+    connection.send(JSON.stringify(msg));
+  }
+
+  function init() {
+    isTablet = is_touch_device();
+    canvas = document.createElement('canvas');
+    canvas.setAttribute('id', 'canvas');
+    context = canvas.getContext('2d');
+    document.body.appendChild(canvas);
+    var size = getSize();
+    width = size.width;
+    height = size.height;
+    canvas.width = width;
+    canvas.height = height;
+    connection.send(JSON.stringify({
+      type: 'size',
+      width: width,
+      height: height
+    }));
+    if (isTablet)
+      initTablet();
+    else
+      initPC();
+  }
+
+  function getSize() {
+    var w = window,
+      d = document,
+      e = d.documentElement,
+      g = d.getElementsByTagName('body')[0];
+    return {
+      width: w.innerWidth || e.clientWidth || g.clientWidth,
+      height: w.innerHeight || e.clientHeight || g.clientHeight
+    };
+  }
+
+  function is_touch_device() {
+    return !!('ontouchstart' in window);
+  }
+
+  function initTablet() {
+    canvas.addEventListener('touchstart', touchStart, false);
+    canvas.addEventListener('touchend', touchEnd, false);
+    canvas.addEventListener('touchcancel', touchCancel, false);
+    canvas.addEventListener('touchleave', touchEnd, false);
+    canvas.addEventListener('touchmove', touchMove, false);
+  }
+
+  var touchParameters = function(touch, parameters) {
+    parameters = parameters || {};
+    parameters.color = colorForTouch(touch);
+    if (touch.force) parameters.force = touch.force;
+    if (touch.radiusX) parameters.radiusX = touch.radiusX;
+    if (touch.radiusY) parameters.radiusY = touch.radiusY;
+    if (touch.rotationAngle) parameters.rotation = touch.rotationAngle;
+    return parameters;
+  };
+
+  function touchStart(event) {
+    try {
+      event.preventDefault();
+      var touches = event.changedTouches;
+      for (var i = 0; i < touches.length; i++) {
+        var touch = touches[i];
+        ongoingTouches.push(copyTouch(touch));
+        var params = touchParameters(touch, {
+          type: 'start',
+          x: {
+            from: touch.pageX
+          },
+          y: {
+            from: touch.pageY
+          }
+        });
+        context.beginPath();
+        context.arc(params.x.from, params.y.from, 4, 0, 2 * Math.PI, false);
+        send(params);
+        context.fillStyle = params.color;
+        context.fill();
+      }
+    } catch (e) {
+      alert('start ' + e.message + ' ' + e.lineNumber);
+    }
+  }
+
+  function touchEnd(event) {
+    try {
+      event.preventDefault();
+      var touches = event.changedTouches;
+      for (var i = 0; i < touches.length; i++) {
+        var touch = touches[i];
+        var params = {
+          type: 'end',
+          x: { },
+          y: { }
+        }
+        var idx = ongoingTouchIndexById(touch.identifier);
+        if (idx >= 0) {
+          context.lineWidth = 4;
+          context.fillStyle = params.color;
+          context.beginPath()
+          var ongoingTouch = ongoingTouches[idx];
+          if (ongoingTouch) {
+        		params.x.from = ongoingTouch.pageX;
+        		params.y.from = ongoingTouch.pageY;
+        	}
+	        if (touch) {
+	        	params.x.to = touch.pageX;
+	        	params.y.to = touch.pageY;	
+	        }
+	        params = touchParameters(touch, params);
+	        if (ongoingTouch) {
+          	context.moveTo(params.x.from, params.y.from);
+          } else {
+            context.moveTo(params.x.to, params.y.to);
+          }
+          if (touch) {
+          	context.lineTo(params.x.to, params.y.to);
+          	context.fillRect(params.to.x - 4, params.to.y - 4, 8, 8);
+          }
+          send(params);
+          ongoingTouches.splice(idx, 1);
+        } else {
+          console.log("can't figure out which touch to end");
+        }
+        ongoingTouches.splice(i, 1);
+      }
+    } catch (e) {
+      console.log('end ' + e.message + ' ' + e.lineNumber);
+    }
+  }
+
+  function touchCancel() {
+    try {
+      event.preventDefault();
+      var touches = event.changedTouches;
+      for (var i = 0; i < touches.length; i++) {
+        send({
+          type: 'cancel'
+        });
+        ongoingTouches.splice(i, 1);
+      }
+    } catch (e) {
+      alert('cancel ' + e.message + ' ' + e.lineNumber);
+    }
+  }
+
+  function touchMove(event) {
+    try {
+      event.preventDefault();
+      var touches = event.changedTouches;
+      for (var i = 0; i < touches.length; i++) {
+        var touch = touches[i];
+        var idx = ongoingTouchIndexById(touch.identifier);
+        if (idx >= 0) {
+          var ongoingTouch = ongoingTouches[idx];
+          context.beginPath();
+          var params = touchParameters(touch, {
+            type: 'move',
+            x: {
+              from: ongoingTouch.pageX,
+              to: touch.pageX
+            },
+            y: {
+              from: ongoingTouch.pageY,
+              to: touch.pageY
+            }
+          });
+          context.moveTo(params.x.from, params.y.from);
+          context.lineTo(params.x.to, params.y.to);
+          send(params);
+          context.lineWidth = 4;
+          context.strokeStyle = params.color;
+          context.stroke();
+          ongoingTouches.splice(idx, 1, copyTouch(touch));
+        } else {
+          console.log("can't figure out which touch to continue");
+        }
+      }
+    } catch (e) {
+      alert('move ' + e.message + ' ' + e.lineNumber);
+    }
+  }
+
+  function colorForTouch(touch) {
+    var r = touch.identifier % 16;
+    var g = Math.floor(touch.identifier / 3) % 16;
+    var b = Math.floor(touch.identifier / 7) % 16;
+    r = r.toString(16);
+    g = g.toString(16);
+    b = b.toString(16);
+    var color = '#' + r + g + b;
+    return color;
+  }
+
+  function copyTouch(touch) {
+    return {
+      identifier: touch.identifier,
+      pageX: touch.pageX,
+      pageY: touch.pageY
+    };
+  }
+
+  function ongoingTouchIndexById(idToFind) {
+    for (var i = 0; i < ongoingTouches.length; i++) {
+      var id = ongoingTouches[i].identifier;
+      if (id == idToFind) {
+        return i
+      }
+    }
+    return -1;
+  }
+
+  function initPC() {
+    divParameters = document.createElement('div');
+    spanForce = document.createElement('div');
+    spanRadiusX = document.createElement('div');
+    spanRadiusY = document.createElement('div');
+    spanRotation = document.createElement('div');
+    divParameters.appendChild(spanForce);
+    divParameters.appendChild(spanRadiusX);
+    divParameters.appendChild(spanRadiusY);
+    divParameters.appendChild(spanRotation);
+    document.body.appendChild(divParameters);
+    divParameters.style.position = 'absolute';
+    divParameters.style.left = '0px';
+    divParameters.style.top = '0px';
+  }
+
+  function onMessageTablet(event) {
+
+  }
+
+  function onMessagePC(event) {
+    var data = JSON.parse(event.data);
+    var type = data.type;
+    if (data.x) {
+      if (data.x.from) data.x.from *= widthRatio;
+      if (data.x.to) data.x.to *= widthRatio;
+    }
+    if (data.y) {
+      if (data.y.from) data.y.from *= heightRatio;
+      if (data.y.to) data.y.to *= heightRatio;
+    }
+    if (data.force) spanForce.innerHTML = data.force;
+    if (data.radiusX) spanRadiusX.innerHTML = data.radiusX;
+    if (data.radiusY) spanRadiusY.innerHTML = data.radiusY;
+    if (data.rotation) spanRotation.innerHTML = data.rotation;
+    switch (type) {
+      case 'size':
+        otherWidth = data.width;
+        otherHeight = data.height;
+        widthRatio = width / otherWidth;
+        heightRatio = height / otherHeight;
+        break;
+      case 'start':
+        context.beginPath();
+        context.arc(data.x.from, data.y.from, 4, 0, 2 * Math.PI, false);
+        context.fillStyle = data.color;
+        context.fill();
+        break;
+      case 'move':
+        context.beginPath();
+        context.moveTo(data.x.from, data.y.from);
+        context.lineTo(data.x.to, data.y.to);
+        context.lineWidth = 4;
+        context.strokeStyle = data.color;
+        context.stroke();
+        break;
+      case 'end':
+        context.lineWidth = 4;
+        context.fillStyle = data.color;
+        context.beginPath();
+        context.moveTo(data.x.from, data.y.from);
+        context.lineTo(data.x.to, data.y.to);
+        context.fillRect(data.x.to - 4, data.y.to - 4, 8, 8);
+        break;
+      default:
+        break;
+    }
+  }
+  </script>
+</head>
+
+<body></body>
+
+</html>
